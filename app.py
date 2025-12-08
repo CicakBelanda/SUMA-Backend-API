@@ -46,9 +46,9 @@ def get_summarizer():
 def get_whisper():
     global whisper_model
     if whisper_model is None:
-        logger.info("Loading Whisper model: small")
+        logger.info("Loading Whisper model: base")
         import whisper
-        whisper_model = whisper.load_model("small", device="cpu")
+        whisper_model = whisper.load_model("base", device="cpu")
         logger.info("Whisper model loaded successfully")
     return whisper_model
 
@@ -62,6 +62,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ========== Startup (preload summarizer) ==========
+@app.on_event("startup")
+async def preload_models() -> None:
+    """
+    Preload the text summarizer so the first request doesn't wait on model download.
+    """
+    get_summarizer()
+
 
 # ========== Request Schemas ==========
 class SummarizeNewsRequest(BaseModel):
