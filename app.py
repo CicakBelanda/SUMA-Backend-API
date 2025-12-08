@@ -68,8 +68,12 @@ app.add_middleware(
 async def preload_models() -> None:
     """
     Preload the text summarizer so the first request doesn't wait on model download.
+    Failure here should not crash the app; we'll retry lazily on first use.
     """
-    get_summarizer()
+    try:
+        get_summarizer()
+    except Exception as exc:
+        logger.exception("Preload summarizer failed; will retry on demand: %s", exc)
 
 
 # ========== Request Schemas ==========
