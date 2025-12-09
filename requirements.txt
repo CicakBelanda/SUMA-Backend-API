@@ -9,4 +9,4 @@ beautifulsoup4>=4.12.2
 requests>=2.31.0
 pydantic>=1.10.15
 lxml>=4.9.3
-youtube-transcript-api
+youtube-transcript-api>=0.6.2

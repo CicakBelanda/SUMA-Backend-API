@@ -12,7 +12,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, HttpUrl
 from readability import Document
 from transformers import pipeline
-from youtube_transcript_api import YouTubeTranscriptApi
+from youtube_transcript_api import (
+    NoTranscriptFound,
+    TranscriptsDisabled,
+    VideoUnavailable,
+    YouTubeTranscriptApi,
+)
 
 # Optional cache dir to avoid re-downloading models on restarts
 os.environ.setdefault("HF_HOME", "/data/hf_cache")
@@ -171,12 +176,23 @@ def extract_youtube_transcript(url: str) -> str:
     if not video_id:
         raise HTTPException(status_code=400, detail="Invalid YouTube URL.")
     try:
-        transcript = YouTubeTranscriptApi.get_transcript(video_id, languages=["en", "id"])
+        # Some deployments may have older youtube-transcript-api versions; try list_transcripts as a fallback.
+        if hasattr(YouTubeTranscriptApi, "get_transcript"):
+            transcript = YouTubeTranscriptApi.get_transcript(video_id, languages=["en", "id"])
+        else:
+            transcripts = YouTubeTranscriptApi.list_transcripts(video_id)
+            transcript = transcripts.find_transcript(["en", "id"]).fetch()
         text = " ".join(segment.get("text", "") for segment in transcript)
         cleaned = clean_text(text)
         if not cleaned:
             raise HTTPException(status_code=500, detail="Transcript was empty.")
         return cleaned
+    except (NoTranscriptFound, TranscriptsDisabled) as exc:
+        logger.exception("Transcript unavailable for video %s", video_id)
+        raise HTTPException(status_code=404, detail=f"Transcript not available: {exc}") from exc
+    except VideoUnavailable as exc:
+        logger.exception("Video unavailable: %s", video_id)
+        raise HTTPException(status_code=404, detail=f"Video unavailable: {exc}") from exc
     except HTTPException:
         raise
     except Exception as exc:
