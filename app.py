@@ -1,10 +1,8 @@
 import logging
 import os
 import re
-import shutil
-import tempfile
 from typing import Any, Dict, List
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 import requests
 import uvicorn
@@ -14,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, HttpUrl
 from readability import Document
 from transformers import pipeline
-from yt_dlp import YoutubeDL
+from youtube_transcript_api import YouTubeTranscriptApi
 
 # Optional cache dir to avoid re-downloading models on restarts
 os.environ.setdefault("HF_HOME", "/data/hf_cache")
@@ -27,7 +25,6 @@ logger = logging.getLogger("app")
 
 # Globals for lazy loading
 summarizer = None
-whisper_model = None
 
 MODEL_NAME = "brotoo/BART-NewsSummarizer"
 
@@ -155,55 +152,36 @@ def get_summarizer():
     return summarizer
 
 
-def get_whisper():
-    global whisper_model
-    if whisper_model is None:
-        logger.info("Loading Whisper model: base")
-        import whisper  # type: ignore
-
-        whisper_model = whisper.load_model("base", device="cpu")
-        logger.info("Whisper model loaded")
-    return whisper_model
-
-
-def temp_audio_path() -> str:
-    directory = tempfile.mkdtemp(prefix="yt_audio_")
-    return os.path.join(directory, "audio.%(ext)s")
-
-
-def find_first_wav(path: str) -> str:
-    if os.path.isfile(path) and path.lower().endswith(".wav"):
-        return path
-    if os.path.isdir(path):
-        for entry in os.listdir(path):
-            candidate = os.path.join(path, entry)
-            if os.path.isfile(candidate) and candidate.lower().endswith(".wav"):
-                return candidate
+def extract_youtube_video_id(url: str) -> str:
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    if host in {"youtu.be"}:
+        return parsed.path.lstrip("/").split("/")[0]
+    if "youtube.com" in host:
+        query_params = parse_qs(parsed.query)
+        video_id = query_params.get("v", [""])[0]
+        if not video_id and parsed.path.startswith("/shorts/"):
+            video_id = parsed.path.split("/shorts/", 1)[-1].split("/")[0]
+        return video_id
     return ""
 
 
-def download_youtube_audio(url: str) -> str:
-    output_template = temp_audio_path()
-    temp_dir = os.path.dirname(output_template)
-    ydl_opts = {
-        "format": "bestaudio/best",
-        "outtmpl": output_template,
-        "postprocessors": [
-            {
-                "key": "FFmpegExtractAudio",
-                "preferredcodec": "wav",
-                "preferredquality": "192",
-            }
-        ],
-        "quiet": True,
-        "no_warnings": True,
-    }
-    with YoutubeDL(ydl_opts) as ydl:
-        ydl.download([url])
-    wav_path = find_first_wav(temp_dir)
-    if not wav_path:
-        raise ValueError("Failed to download or convert YouTube audio.")
-    return wav_path
+def extract_youtube_transcript(url: str) -> str:
+    video_id = extract_youtube_video_id(url)
+    if not video_id:
+        raise HTTPException(status_code=400, detail="Invalid YouTube URL.")
+    try:
+        transcript = YouTubeTranscriptApi.get_transcript(video_id, languages=["en", "id"])
+        text = " ".join(segment.get("text", "") for segment in transcript)
+        cleaned = clean_text(text)
+        if not cleaned:
+            raise HTTPException(status_code=500, detail="Transcript was empty.")
+        return cleaned
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Failed to fetch YouTube transcript")
+        raise HTTPException(status_code=500, detail=f"Could not fetch transcript: {exc}")
 
 
 app = FastAPI(title="News and Video Summarizer", version="1.0.0")
@@ -257,16 +235,8 @@ async def summarize_video(payload: SummarizeVideoRequest) -> Dict[str, Any]:
         logger.exception("Failed to load summarizer")
         return {"error": f"Model load failed: {exc}"}
 
-    audio_path = ""
-    temp_dir = ""
     try:
-        whisper = get_whisper()
-        audio_path = download_youtube_audio(str(payload.url))
-        temp_dir = os.path.dirname(audio_path)
-        transcript = whisper.transcribe(audio_path, language="en")
-        transcript_text = clean_text(transcript.get("text", ""))
-        if not transcript_text:
-            raise HTTPException(status_code=500, detail="No transcript text could be produced from the audio.")
+        transcript_text = extract_youtube_transcript(str(payload.url))
         summary = summarize_text(transcript_text, model)
         if not summary:
             raise HTTPException(status_code=500, detail="Summarization failed.")
@@ -276,14 +246,6 @@ async def summarize_video(payload: SummarizeVideoRequest) -> Dict[str, Any]:
     except Exception as exc:
         logger.exception("Unexpected error during video summarization")
         return {"error": f"Video summarization failed: {exc}"}
-    finally:
-        try:
-            if audio_path and os.path.exists(audio_path):
-                os.remove(audio_path)
-            if temp_dir:
-                shutil.rmtree(temp_dir, ignore_errors=True)
-        except Exception:
-            logger.exception("Failed to clean up temporary audio files")
 
 
 if __name__ == "__main__":

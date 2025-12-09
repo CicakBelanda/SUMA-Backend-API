@@ -4,10 +4,9 @@ torch==2.2.0+cpu
 --extra-index-url https://download.pytorch.org/whl/cpu
 fastapi>=0.115.0
 uvicorn[standard]>=0.30.0
-openai-whisper==20231117
-yt_dlp>=2023.11.16
 readability-lxml>=0.8.1
 beautifulsoup4>=4.12.2
 requests>=2.31.0
 pydantic>=1.10.15
 lxml>=4.9.3
+youtube-transcript-api
