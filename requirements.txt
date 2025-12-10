@@ -2,11 +2,12 @@ numpy<2
 transformers==4.46.1
 torch==2.2.0+cpu
 --extra-index-url https://download.pytorch.org/whl/cpu
-fastapi>=0.115.0
-uvicorn[standard]>=0.30.0
-readability-lxml>=0.8.1
-beautifulsoup4>=4.12.2
-requests>=2.31.0
-pydantic>=1.10.15
-lxml>=4.9.3
-youtube-transcript-api>=0.6.2
+fastapi
+uvicorn[standard]
+python-multipart
+readability-lxml
+beautifulsoup4
+requests
+pydantic
+lxml
+openai-whisper
