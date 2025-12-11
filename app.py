@@ -27,11 +27,6 @@ whisper_model = None
 
 MODEL_NAME = "brotoo/BART-NewsSummarizer"
 
-ALLOWED_DOMAINS = {
-    "cnn.com", "www.cnn.com", "edition.cnn.com",
-    "nbcnews.com", "www.nbcnews.com",
-    "bbc.com", "www.bbc.com", "bbc.co.uk", "www.bbc.co.uk",
-}
 
 class SummarizeNewsRequest(BaseModel):
     url: HttpUrl
@@ -65,7 +60,6 @@ def extract_article_content(url: str) -> str:
         document = Document(html)
         article_text = clean_html(document.summary())
         if not article_text:
-            from bs4 import BeautifulSoup
             soup = BeautifulSoup(html, "html.parser")
             paragraphs = [p.get_text(" ", strip=True) for p in soup.find_all("p")]
             article_text = clean_text(" ".join(paragraphs))
@@ -78,7 +72,7 @@ def chunk_text(text: str, max_words: int = 800) -> List[str]:
     words = text.split()
     if not words:
         return []
-    return [" ".join(words[i:i+max_words]) for i in range(0, len(words), max_words)]
+    return [" ".join(words[i:i + max_words]) for i in range(0, len(words), max_words)]
 
 
 def summarize_text(text: str, model_pipeline) -> str:
@@ -139,7 +133,7 @@ def transcribe_uploaded_video(file_path: str) -> str:
     if whisper_model is None:
         model_name = os.getenv("WHISPER_MODEL", "small")
         logger.info("Loading Whisper model...")
-        whisper_model = whisper.load_model(model_name)   # CPU
+        whisper_model = whisper.load_model(model_name)
 
     result = whisper_model.transcribe(file_path, fp16=False)
     text = clean_text(result.get("text", ""))
@@ -164,7 +158,7 @@ app.add_middleware(
 @app.post("/summarize-upload-video")
 async def summarize_upload_video(file: UploadFile = File(...)) -> Dict[str, Any]:
     """
-    Upload video directly (mp4/mov/mkv/m4a/wav),
+    Upload video/audio,
     transcribe with Whisper → summarize with BART.
     """
     if not file.filename.lower().endswith((".mp4", ".mov", ".mkv", ".m4a", ".wav")):
@@ -193,25 +187,20 @@ async def summarize_upload_video(file: UploadFile = File(...)) -> Dict[str, Any]
         except Exception:
             pass
 
+
 @app.post("/summarize-news")
 async def summarize_news(payload: SummarizeNewsRequest) -> Dict[str, Any]:
     url = str(payload.url)
     logger.info("Received news summarization request for %s", url)
 
-    # Validasi domain
-    parsed = requests.utils.urlparse(url)
-    if parsed.netloc not in ALLOWED_DOMAINS:
-        raise HTTPException(status_code=400, detail="Unsupported news domain.")
+    # ⛔️ DOMAIN CHECK REMOVED — now accepts any domain
 
-    # Load model
     model = get_summarizer()
 
-    # Ekstrak artikel
     article_text = extract_article_content(url)
     if not article_text or len(article_text.split()) < 40:
         raise HTTPException(status_code=400, detail="Could not extract enough article text to summarize.")
 
-    # Summarize
     summary = summarize_text(article_text, model)
     if not summary:
         raise HTTPException(status_code=500, detail="Summarization failed.")
